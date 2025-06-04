@@ -1,246 +1,238 @@
-// src/cipher_utils.cpp
 #include "cipher_utils.h"
+#include <algorithm> // Not strictly used yet, but common for C++ utilities
 
-// Safely reads filename into a buffer 
-int safe_input(char *buffer, int size) {
-    if (fgets(buffer, size, stdin) == NULL) {
-        return 0;
-    }
-    buffer[strcspn(buffer, "\n")] = 0;
-    return 1;
+namespace cipher_utils {
+
+// --- Helper: Extension Check ---
+bool has_txt_extension(const std::string& filename) {
+    if (filename.length() < 4) return false; // Must be at least "a.txt"
+    return filename.substr(filename.length() - 4) == ".txt";
+    // A more robust way using std::filesystem:
+    // std::filesystem::path filePath(filename);
+    // return filePath.extension() == ".txt";
 }
 
-// Clears input buffer
-void clear_stdin(void) {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF);
-}
-
-// ... PASTE ALL YOUR OTHER FUNCTION IMPLEMENTATIONS HERE ...
-// ... (handle_file_error, validate_file, validate_peg_value, encrypt_file, decrypt_file, read_file, search_files, view_history, log_encryption) ...
-
-// Make sure this function is present and uncommented if you use it
-void handle_file_error(const char *filename) {
-    printf("Error: Unable to open or process file '%s'.\n"
-           "Ensure the file exists and you have the necessary permissions.\n", 
-           filename);
-}
-
-// Validates file existence, non-emptiness, and .txt extension
-int validate_file(const char *filename) {
-    // First check if the file has .txt extension
+// --- Validation Functions Implementations ---
+bool validate_input_file(const std::string& filename) {
     if (!has_txt_extension(filename)) {
-        printf("Error: File '%s' must have a .txt extension.\n", filename);
-        return 0;
+        std::cerr << "Error (Input): File '" << filename << "' must have a .txt extension.\n";
+        return false;
     }
-
-    // Try to open the file
-    FILE *file = fopen(filename, "rb");
-    if (file == NULL) {
-        printf("Error: Cannot open file '%s'. Check if the file exists.\n", filename);
-        return 0;
+    std::filesystem::path filePath(filename);
+    if (!std::filesystem::exists(filePath)) {
+        std::cerr << "Error (Input): File '" << filename << "' does not exist.\n";
+        return false;
     }
-
-    // Check if file is empty
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fclose(file);
-
-    if (file_size == 0) {
-        printf("Error: File '%s' is empty.\n", filename);
-        return 0;
+    if (!std::filesystem::is_regular_file(filePath)) {
+        std::cerr << "Error (Input): '" << filename << "' is not a regular file.\n";
+        return false;
     }
-
-    return 1;
+    std::error_code ec;
+    uintmax_t fileSize = std::filesystem::file_size(filePath, ec);
+    if (ec) {
+        std::cerr << "Error (Input): Could not get size of file '" << filename << "': " << ec.message() << "\n";
+        return false;
+    }
+    if (fileSize == 0) {
+        std::cerr << "Error (Input): File '" << filename << "' is empty.\n";
+        return false;
+    }
+    return true;
 }
 
-// check if the peg is within the range
-int validate_peg_value(int peg) {
+bool validate_output_file(const std::string& output_filename, const std::string& input_filename_for_comparison) {
+    if (!has_txt_extension(output_filename)) {
+        std::cerr << "Error (Output): File '" << output_filename << "' must have a .txt extension.\n";
+        return false;
+    }
 
-    // check if input is from 0 to 256 
+    if (!input_filename_for_comparison.empty()) {
+         // Check if paths are equivalent only if both exist, otherwise it's not a meaningful comparison for overwriting
+        std::filesystem::path out_fs_path(output_filename);
+        std::filesystem::path in_fs_path(input_filename_for_comparison);
+        if (std::filesystem::exists(out_fs_path) && std::filesystem::exists(in_fs_path)) {
+            std::error_code ec;
+            if (std::filesystem::equivalent(out_fs_path, in_fs_path, ec)) {
+                 std::cerr << "Error (Output): File '" << output_filename
+                          << "' cannot be the same as the input file '" << input_filename_for_comparison << "'.\n";
+                return false;
+            }
+            if (ec) { // Error during equivalent check, treat as potential issue
+                 std::cerr << "Warning (Output): Could not determine if output is same as input: " << ec.message() << "\n";
+            }
+        } else if (output_filename == input_filename_for_comparison) { // Fallback to string comparison if files don't exist
+            std::cerr << "Error (Output): File '" << output_filename
+                      << "' cannot be the same as the input file '" << input_filename_for_comparison << "'.\n";
+            return false;
+        }
+    }
+
+
+    std::filesystem::path out_path(output_filename);
+    std::filesystem::path parent_dir = out_path.parent_path();
+    if (parent_dir.empty()) {
+        parent_dir = "."; // Current directory
+    }
+
+    if (!std::filesystem::exists(parent_dir)) {
+        std::cerr << "Error (Output): Directory for output file '" << output_filename << "' (" << parent_dir.string() << ") does not exist.\n";
+        return false;
+    }
+    if (!std::filesystem::is_directory(parent_dir)) {
+         std::cerr << "Error (Output): Path for output file directory '" << parent_dir.string() << "' is not a directory.\n";
+        return false;
+    }
+    if (std::filesystem::exists(out_path) && !std::filesystem::is_regular_file(out_path)) {
+        std::cerr << "Error (Output): Path '" << output_filename << "' exists but is not a regular file.\n";
+        return false;
+    }
+
+    // Basic writability check
+    std::filesystem::path temp_file_path = parent_dir / "temp_write_check.tmp";
+    std::ofstream temp_stream(temp_file_path);
+    if (!temp_stream.is_open()) {
+        std::cerr << "Error (Output): Cannot write to output directory '" << parent_dir.string()
+                  << "'. Check permissions for file '" << output_filename << "'.\n";
+        return false;
+    }
+    temp_stream.close();
+    std::error_code ec_remove;
+    std::filesystem::remove(temp_file_path, ec_remove);
+    if (ec_remove) {
+        std::cerr << "Warning (Output): Failed to remove temp write-check file: " << ec_remove.message() << "\n";
+    }
+    return true;
+}
+
+bool validate_peg_value(int peg) {
     return (peg >= MIN_PEG && peg <= MAX_PEG);
 }
 
-// main encryption 
-int encrypt_file(const char *input_file, const char *output_file, int pegs) {
-    FILE *in = NULL, *out = NULL;
-    unsigned char buffer[BUFFER_SIZE];
-    size_t bytes_read;
-    int success = 0;
-
-    // Open input and output files
-    in = fopen(input_file, "rb");
-    if (in == NULL) {
-        printf("Error opening input file: %s\n", input_file);
-        return 0;
-    }
-
-    out = fopen(output_file, "wb");
-    if (out == NULL) {
-        printf("Error opening output file: %s\n", output_file);
-        fclose(in);
-        return 0;
-    }
-
-    printf("Encrypting %s -> %s (Pegs: %d)\n", input_file, output_file, pegs);
-
-    // Process file in chunks with direct peg value
-    while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, in)) > 0) { //4096
-        for (size_t i = 0; i < bytes_read; i++) {  
-            buffer[i] = (buffer[i] + pegs) % 256;
-
+bool validate_operation_parameters(const OperationParams& params, const ValidationFlags& flags) {
+    if (flags.check_input_file) {
+        if (!validate_input_file(params.input_file)) {
+            return false;
         }
-
-        if (fwrite(buffer, 1, bytes_read, out) != bytes_read) { // 
-            printf("Write error occurred during encryption.\n");
-            goto cleanup;
     }
+    if (flags.check_output_file) {
+        std::string input_for_comparison = flags.ensure_output_different_from_input ? params.input_file : "";
+        if (!validate_output_file(params.output_file, input_for_comparison)) {
+            return false;
         }
-
-    success = 1;
-    printf("File encrypted successfully.\n");
-
-cleanup:
-    if (in) fclose(in);
-    if (out) fclose(out);
-    return success;
+    }
+    if (flags.check_pegs) {
+        if (!validate_peg_value(params.pegs)) {
+            std::cerr << "Error: Peg value " << params.pegs << " is out of range ("
+                      << MIN_PEG << "-" << MAX_PEG << ").\n";
+            return false;
+        }
+    }
+    return true;
 }
 
-// decryption (just like encryption but reverse)
-int decrypt_file(const char *input_file, const char *output_file, int pegs) {
-    FILE *in = NULL, *out = NULL;
-    unsigned char buffer[BUFFER_SIZE];
-    size_t bytes_read;
-    int success = 0;
-
-    // Open input and output files
-    in = fopen(input_file, "rb");
-    if (in == NULL) {
-        printf("Error opening input file: %s\n", input_file);
-        return 0;
-    }
-
-    out = fopen(output_file, "wb");
-    if (out == NULL) {
-        printf("Error opening output file: %s\n", output_file);
-        fclose(in);
-        return 0;
-    }
-
-    printf("Decrypting %s -> %s (Pegs: %d)\n", input_file, output_file, pegs);
-
-    // Process file in chunks with reversed peg value
-    while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, in)) > 0) {
-        for (size_t i = 0; i < bytes_read; i++) {
-            buffer[i] = (buffer[i] - pegs + 256) % 256; // Ensure result is non-negative
-        }
-
-        if (fwrite(buffer, 1, bytes_read, out) != bytes_read) {
-            printf("Write error occurred during decryption.\n");
-            goto cleanup;
-        }
-    }
-
-    success = 1;
-    printf("File decrypted successfully.\n");
-
-cleanup:
-    if (in) fclose(in);
-    if (out) fclose(out);
-    return success;
+bool validate_encryption_params(const OperationParams& params) {
+    return validate_operation_parameters(params, DEFAULT_ENCRYPT_DECRYPT_FLAGS);
 }
 
-// Displays file contents
-void read_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (file == NULL) {
-        handle_file_error(filename);
+bool validate_decryption_params(const OperationParams& params) {
+    return validate_operation_parameters(params, DEFAULT_ENCRYPT_DECRYPT_FLAGS);
+}
+
+
+// --- Core Cipher Operations Implementations ---
+// Common file processing logic
+bool process_file_core(const std::string& input_file, const std::string& output_file, int pegs, bool encrypt_mode) {
+    std::ifstream in(input_file, std::ios::binary);
+    if (!in) {
+        std::cerr << "Error opening input file: " << input_file << std::endl;
+        return false;
+    }
+
+    std::ofstream out(output_file, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        std::cerr << "Error opening output file: " << output_file << std::endl;
+        return false;
+    }
+
+    std::cout << (encrypt_mode ? "Encrypting " : "Decrypting ")
+              << input_file << " -> " << output_file << " (Pegs: " << pegs << ")\n";
+
+    std::vector<unsigned char> buffer_vec(BUFFER_SIZE);
+    while (in.read(reinterpret_cast<char*>(buffer_vec.data()), buffer_vec.size()) || in.gcount() > 0) {
+        size_t bytes_read = static_cast<size_t>(in.gcount());
+        if (bytes_read == 0 && in.eof()) break; // EOF and no bytes read in last attempt
+        if (bytes_read == 0 && !in.eof()) { // Error or nothing read but not EOF
+            if(in.bad()) std::cerr << "Read error occurred on input file " << input_file << ".\n";
+            break; 
+        }
+
+
+        for (size_t i = 0; i < bytes_read; ++i) {
+            if (encrypt_mode) {
+                buffer_vec[i] = static_cast<unsigned char>((buffer_vec[i] + pegs) % 256);
+            } else {
+                buffer_vec[i] = static_cast<unsigned char>((buffer_vec[i] - pegs + 256) % 256);
+            }
+        }
+
+        if (!out.write(reinterpret_cast<const char*>(buffer_vec.data()), bytes_read)) {
+            std::cerr << "Write error occurred during " << (encrypt_mode ? "encryption" : "decryption") << ".\n";
+            return false; // in and out will auto-close
+        }
+    }
+    
+    if (in.bad()) {
+        std::cerr << "Read error (badbit) occurred on input file " << input_file << ".\n";
+        return false;
+    }
+
+    std::cout << "File " << (encrypt_mode ? "encrypted" : "decrypted") << " successfully.\n";
+    log_operation((encrypt_mode ? "ENCRYPT" : "DECRYPT"), input_file, output_file, pegs);
+    return true;
+}
+
+bool encrypt_file(const std::string& input_file, const std::string& output_file, int pegs) {
+    return process_file_core(input_file, output_file, pegs, true);
+}
+
+bool decrypt_file(const std::string& input_file, const std::string& output_file, int pegs) {
+    return process_file_core(input_file, output_file, pegs, false);
+}
+
+// --- History and Logging Implementations ---
+void log_operation(const std::string& operation_type, const std::string& input_file, const std::string& output_file, int pegs) {
+    std::ofstream file(HISTORY_FILE, std::ios::app);
+    if (!file) {
+        std::cerr << "Warning: Could not log operation to '" << HISTORY_FILE << "'.\n";
         return;
     }
 
-    char buffer[BUFFER_SIZE];
-    printf("\nFile contents:\n");
-    printf("-------------------\n");
-    
-    while (fgets(buffer, sizeof(buffer), file) != NULL) {
-        printf("%s", buffer);
-    }
-    printf("\n-------------------\n");
-    
-    fclose(file);
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::localtime(&now_c); // Note: localtime is not thread-safe
+
+    file << operation_type << ": " << input_file << " -> " << output_file
+         << " (pegs: " << pegs << ") | "
+         << std::put_time(&now_tm, "%Y-%m-%d %H:%M:%S") << '\n';
 }
 
-// Lists files in current directory
-void search_files(void) {
-    DIR *dir; // struct type
-    struct dirent *entry; //each entry
-    int count = 0;
-
-    dir = opendir("."); // "." represent current directory
-    if (dir == NULL) {  // make sure that the directory exist 
-        printf("Error: Cannot open current directory.\n");
-        return;
+// --- Console Input Implementations (if needed) ---
+bool safe_console_input(std::string& buffer) {
+    if (std::getline(std::cin, buffer)) {
+        return true;
     }
-
-    printf("\nFiles in current directory:\n");
-    printf("-------------------\n");
-    
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_REG) {  //d_type is a type of file
-            printf("%s\n", entry->d_name);
-            count++;
-        }
+    if (std::cin.eof()) {
+        std::cerr << "EOF reached on input." << std::endl;
+    } else if (std::cin.fail()) {
+        std::cerr << "Input error." << std::endl;
+        std::cin.clear();
+        clear_console_stdin();
     }
-    
-    printf("-------------------\n");
-    printf("Total files: %d\n", count);
-    
-    closedir(dir);
+    return false;
 }
 
-// Displays encryption history
-void view_history(void) {
-    FILE *file = fopen(HISTORY_FILE, "r");
-    if (file == NULL) {
-        printf("No encryption history found.\n");
-        return;
-    }
-
-    char buffer[BUFFER_SIZE];
-    printf("\nEncryption History:\n");
-    printf("-------------------\n");
-    
-    while (fgets(buffer, sizeof(buffer), file) != NULL) {
-        printf("%s", buffer);
-    }
-    printf("-------------------\n");
-    
-    fclose(file);
+void clear_console_stdin(void) {
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 }
 
-// Logs encryption operations with timestamp
-void log_encryption(const char *input_file, const char *output_file, int pegs) {
-    FILE *file = fopen(HISTORY_FILE, "a");
-    if (file == NULL) {
-        printf("Warning: Could not log encryption history.\n");
-        return;
-    }
-
-    time_t now;
-    time(&now);
-    char *date = ctime(&now);
-    date[strlen(date) - 1] = '\0';  // Remove newline
-
-    fprintf(file, "%s -> %s (pegs: %d) | %s\n", 
-           input_file, output_file, pegs, date);
-    
-    fclose(file);
-}
-
-int has_txt_extension(const char *filename) {
-    const char *dot = strrchr(filename, '.'); // Needs <cstring>
-    if (dot == NULL) {
-        return 0;
-    }
-    return strcmp(dot, ".txt") == 0; // Needs <cstring>
-}
+} // namespace cipher_utils

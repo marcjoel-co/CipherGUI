@@ -2,7 +2,7 @@
 
 # Compiler and flags
 CXX = clang++
-CXXFLAGS = -std=c++11 -g -Wall # Use c++11 or newer for ImGui
+CXXFLAGS = -std=c++17 -g -Wall # Use c++11 or newer for ImGui
 # Include paths for your project's headers and ImGui headers
 # Also include path for GLFW (installed by Homebrew)
 INCLUDES = -I./src -I./lib/imgui -I./lib/imgui/backends -I/usr/local/include
