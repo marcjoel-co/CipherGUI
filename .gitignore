@@ -1,21 +1,20 @@
-# Build artifacts
-*.o
-*.exe
-*.tmp
-CipherGUI.exe
-cipher_gui
-
-# OS generated files
+# General
 .DS_Store
-Thumbs.db
+*.log
+*.tmp
 
-# Editor / IDE specific
+# IDE / Editor specific
 .vscode/
 .idea/
 
-# Private Vault - Should not be in version control
-private_vault/
-.private_vault/
+# Build artifacts
+*.o
+*.exe
+cipher_gui
 
-# Other project specific ignores
-history.md
+# Private files / Vault
+# Note: Be careful about committing a vault. Usually, this should be ignored.
+# If you want to commit the directory but not its contents, you can add
+# a .gitignore inside the vault directory itself.
+.private_vault/
+private_vault/
