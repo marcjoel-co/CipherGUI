@@ -1,0 +1,71 @@
+#
+# Makefile for CipherGUI on Windows with MinGW/g++
+#
+
+# --- Configuration ---
+# Compiler
+CXX = g++
+
+# Compiler flags
+# -std=c++17: Enables C++17 features (like std::filesystem)
+# -g:         Generates debugging information
+# -Wall:      Enables all common warnings
+CXXFLAGS = -std=c++17 -g -Wall
+
+# Directories
+SRC_DIR = src
+IMGUI_DIR = lib/imgui
+GLFW_DIR = lib/glfw # Directory for our Windows GLFW files
+
+# --- Paths and Libraries ---
+# Include paths for the compiler (-I)
+INCLUDES = -I$(SRC_DIR) \
+           -I$(IMGUI_DIR) \
+           -I$(IMGUI_DIR)/backends \
+           -I$(GLFW_DIR)/include
+
+# Library search paths for the linker (-L)
+LDFLAGS = -L$(GLFW_DIR)/lib-mingw-w64
+
+# Libraries to link (-l)
+# Order can be important. We link our app's dependencies first,
+# then system libraries. gdi32 and opengl32 are required by glfw on Windows.
+LIBS = -lglfw3 -lgdi32 -lopengl32 -limm32 -lshell32
+
+# --- Source Files ---
+# Automatically find all .cpp files to compile
+SRCS = $(wildcard $(SRC_DIR)/*.cpp) \
+       $(wildcard $(IMGUI_DIR)/*.cpp) \
+       $(wildcard $(IMGUI_DIR)/backends/imgui_impl_glfw.cpp) \
+       $(wildcard $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp)
+
+# Generate object file names from source file names
+OBJS = $(SRCS:.cpp=.o)
+
+# The final executable name
+TARGET = CipherGUI.exe
+
+# --- Build Rules ---
+
+# The default goal: build the executable
+all: $(TARGET)
+
+# Rule to link the final executable
+$(TARGET): $(OBJS)
+	@echo "Linking executable: $(TARGET)"
+	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS) $(LIBS)
+	@echo "Build complete. Run with: ./$(TARGET)"
+
+# Generic rule to compile a .cpp file into a .o object file
+%.o: %.cpp
+	@echo "Compiling: $<"
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Rule to clean up build artifacts
+clean:
+	@echo "Cleaning project..."
+	rm -f $(OBJS) $(TARGET)
+	@echo "Clean complete."
+
+# Phony targets are not files
+.PHONY: all clean
