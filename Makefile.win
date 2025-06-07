@@ -29,13 +29,16 @@ LDFLAGS = -L$(GLFW_DIR)/lib-mingw-w64
 LIBS = -lglfw3 -lgdi32 -lopengl32 -limm32 -lshell32 -lssl -lcrypto
 
 # --- Source Files ---
-SRCS = $(wildcard $(SRC_DIR)/*.cpp) \
+SRCS = $(wildcard $(SRC_DIR)/main.cpp) \
+       $(wildcard $(SRC_DIR)/application.cpp) \
+       $(wildcard $(SRC_DIR)/ui_manager.cpp) \
+       $(wildcard $(SRC_DIR)/cipher_utils.cpp) \
        $(wildcard $(IMGUI_DIR)/*.cpp) \
        $(wildcard $(IMGUI_DIR)/backends/imgui_impl_glfw.cpp) \
        $(wildcard $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp)
-	   
 
 OBJS = $(SRCS:.cpp=.o)
+	   
 
 # The final executable name
 TARGET = CipherGUI.exe
