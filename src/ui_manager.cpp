@@ -1,515 +1,480 @@
-#include "ui_manager.h"
+// Filename: src/ui_manager.cpp
+#include "ui_manager.h" 
+#include "imgui.h"            // The core ImGui drawing library.
+#include "external_editor.h"  // We need to call its functions when the "Open" button is clicked.
+#include "diary_manager.h"    // We need to access and modify the diary data.
 
-// Note: No 'cipher_utils::' prefixes needed anymore.
-#include "cipher_utils.h"
+#include <cstring>   // For C-style string functions like strcpy, strlen.
+#include <cctype>    // For character functions like isspace.
+#include <ctime>     // For getting the current date to validate against future dates.
+#include <cstdio>    // For sscanf to parse the date string.
+#include <string>    // For std::string, used in the status message.
 
-#include <GLFW/glfw3.h> // For window operations (e.g., exit)
-#include "imgui.h"
-#include "imgui_stdlib.h" // For using std::string with ImGui::InputTextMultiline
+// --- COMPILE-TIME SWITCH FOR SHENANIGANS ---
+// This is a preprocessor macro. If you change this to 1, the code will use the
+// "shenanigans" UI functions instead of the standard ImGui ones. This is a fantastic
+// way to toggle experimental or debug features.
+#define ENABLE_SHENANIGANS 0
 
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <algorithm> // For std::clamp
+#if ENABLE_SHENANIGANS
+    #include "for_shenanigans_ui_demo.h"
 
-namespace {
-    // RAII class for redirecting std::cerr to capture error messages from backend functions.
-    // Encapsulated here as it's an internal implementation detail of the UI manager.
-    class CerrRedirect {
-    public:
-        CerrRedirect(std::streambuf* new_buffer) 
-            : old_cerr_buf(std::cerr.rdbuf(new_buffer)) {}
-        
-        ~CerrRedirect() {
-            std::cerr.rdbuf(old_cerr_buf);
-        }
+    // When shenanigans are enabled, these macros redirect our UI calls to the fun versions.
+    #define UI_BUTTON(label, index) shenanigans_ui::ulol(label, index)
+    #define UI_BUTTON_SIZED(label, size, index) shenanigans_ui::ulol(label, index)
+    #define UI_TABLE_BEGIN(name, cols, flags) shenanigans_ui::ulolTable(name, cols, flags)
+    #define UI_TABLE_END() shenanigans_ui::EndTable()
+#else
+    // When shenanigans are disabled, these macros are just aliases for the normal ImGui functions.
+    // This lets us use `UI_BUTTON` everywhere in our code without an `if/else` block each time.
+    #define UI_BUTTON(label, index) ImGui::Button(label)
+    #define UI_BUTTON_SIZED(label, size, index) ImGui::Button(label, size)
+    #define UI_TABLE_BEGIN(name, cols, flags) ImGui::BeginTable(name, cols, flags)
+    #define UI_TABLE_END() ImGui::EndTable()
+#endif
 
-    private:
-        // Disable copy and assignment
-        CerrRedirect(const CerrRedirect&) = delete;
-        CerrRedirect& operator=(const CerrRedirect&) = delete;
 
-        std::streambuf* old_cerr_buf;
-    };
-} // namespace
+namespace ui_manager {
 
-UIManager::UIManager()
-    : current_screen(Screen::MainMenu),
-      screen_requiring_password(Screen::MainMenu),
-      current_modal(Modal::None),
-      admin_access_granted(false),
-      gui_message("Welcome to Cipher GUI!"),
-      gui_message_color(MSG_COLOR_INFO),
-      pegs_value(MIN_PEG),
-      compare_modal_pegs_value(MIN_PEG)
-{
-    clear_all_persistent_state();
-    go_to_screen(Screen::MainMenu);
-}
+// --- UI STATE MANAGEMENT ---
+// ImGui is an "immediate mode" library, meaning it redraws everything from scratch each
+// frame. It doesn't store state (like which item is selected). So, we must do it ourselves.
+// This `UIState` struct acts as the "short-term memory" for our entire UI.
+struct UIState {
+    // Buffers for the "New Entry" popup text fields.
+    char new_date[32] = "YYYY-MM-DD";
+    char new_title[128] = "";
+    char new_content[9999] = ""; // Note: This is a large buffer for a stack-allocated struct. It's fine for now.
+    const char* validation_error = nullptr; // Pointer to an error message string.
 
-bool UIManager::is_modal_active() const noexcept {
-    return current_modal != Modal::None;
-}
+    // Flags to control when popups should open. This is the correct ImGui pattern.
+    bool open_delete_confirmation_popup = false;
+    bool open_delete_all_confirmation_popup = false;
 
-void UIManager::clear_all_persistent_state() {
-    // More idiomatic C++ way to clear C-style string buffers
-    input_file_path_buf[0] = '\0';
-    output_file_path_buf[0] = '\0';
-    get_item_filename_buf[0] = '\0';
-    get_item_destination_buf[0] = '\0';
-    admin_password_buf[0] = '\0';
-    compare_modal_vault_filename_buf[0] = '\0';
-    compare_modal_external_enc_filepath_buf[0] = '\0';
+    // State for the main entries table.
+    int selected_id = -1;    // The unique ID of the selected entry.
+    int selected_index = -1; // The row number of the selected entry.
 
-    pegs_value = MIN_PEG;
-    compare_modal_pegs_value = MIN_PEG;
-    history_content_buf.clear();
-}
+    // State for the confirmation dialogs.
+    int entry_id_to_delete = -1;
 
-std::pair<ImVec2, float> UIManager::draw_ui(GLFWwindow* window) {
-    // --- Handle Modals ---
-    if (current_modal == Modal::AdminPasswordPrompt) {
-        std::string prompt_msg = "Admin privileges required.";
-        if (screen_requiring_password == Screen::History) prompt_msg = "Access to Operation History requires Admin password.";
-        else if (screen_requiring_password == Screen::GetItem) prompt_msg = "Access to Retrieve Original File requires Admin password.";
-        draw_admin_password_prompt_modal(prompt_msg);
-    } else if (current_modal == Modal::CompareFilesPrompt) {
-        draw_compare_files_modal();
+    // State for the temporary "toast" notification message.
+    std::string status_message;
+    float status_message_timer = 0.0f; // Countdown timer.
+
+    // Resets the "New Entry" form.
+    void prepareForNew() {
+        strcpy(new_date, "YYYY-MM-DD");
+        strcpy(new_title, "");
+        strcpy(new_content, "");
+        validation_error = nullptr;
     }
 
-    // --- Main Window Setup ---
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGuiWindowFlags root_panel_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                        ImGuiWindowFlags_MenuBar;
+    // Clears the current table selection.
+    void deselect() {
+        selected_id = -1;
+        selected_index = -1;
+    }
 
-    ImGui::Begin("RootCanvas", nullptr, root_panel_flags);
+    // Sets a status message to be displayed for 3 seconds.
+    void setStatus(const std::string& message) {
+        status_message = message;
+        status_message_timer = 3.0f; 
+    }
+};
 
-    float accumulated_chrome_height = ImGui::GetStyle().WindowPadding.y * 2;
+// `static` means there is only ONE instance of this struct for the entire file.
+// Its data persists across multiple calls to `draw_ui`, which is how our UI "remembers" things.
+static UIState s_ui_state;
 
-    // --- Menu Bar ---
+// --- HELPER FUNCTIONS ---
+
+// A utility to trim leading/trailing whitespace from user input.
+void trimWhitespace(char* str) {
+    if (!str || *str == '\0') return;
+    char* start = str;
+    while (isspace(static_cast<unsigned char>(*start))) start++;
+    char* dest = str;
+    while (*start != '\0') *dest++ = *start++;
+    *dest = '\0';
+    char* end = dest - 1;
+    while (end >= str && isspace(static_cast<unsigned char>(*end))) end--;
+    *(end + 1) = '\0';
+}
+
+// --- INPUT VALIDATION LOGIC ---
+// This class is a masterpiece of good design. It isolates all the complex validation
+// rules into a single, reusable place.
+class Validator {
+public:
+    // The constructor takes all the data it needs to perform its checks.
+    Validator(const char* date, const char* title, DiaryManager& diary)
+        : m_date(date), m_title(title), m_diary(diary), m_error(nullptr) {}
+
+    // This is the main entry point. It uses a "fluent interface" or "method chaining".
+    // Each `check...` function returns a reference to itself, allowing us to chain calls together.
+    Validator& checkAll() {
+        checkDateFormat()
+        .checkDateLogic()
+        .checkFutureDate()
+        .checkTitle()
+        .checkUniqueness();
+        return *this;
+    }
+
+    // A simple way to see if all checks passed.
+    bool isValid() const { return m_error == nullptr; }
+    // If validation failed, this returns the specific error message.
+    const char* getError() const { return m_error; }
+
+private:
+    // This is the key to the fluent interface: if an error has already been found,
+    // all subsequent checks are instantly skipped. This is efficient and clean.
+    Validator& checkDateFormat() {
+        if (m_error) return *this; // Short-circuit if already failed.
+        if (sscanf(m_date, "%d-%d-%d", &m_year, &m_month, &m_day) != 3) {
+            m_error = "Error: Date format must be YYYY-MM-DD.";
+        }
+        return *this;
+    }
+
+    Validator& checkDateLogic() {
+        if (m_error) return *this; // Short-circuit...
+        if (m_month < 1 || m_month > 12 || m_day < 1 || m_day > 31) m_error = "Error: Invalid month or day.";
+        else if ((m_month == 4 || m_month == 6 || m_month == 9 || m_month == 11) && m_day > 30) m_error = "Error: Invalid day for this month.";
+        else if (m_month == 2) {
+            bool isLeap = (m_year % 4 == 0 && (m_year % 100 != 0 || m_year % 400 == 0));
+            if (m_day > (isLeap ? 29 : 28)) m_error = "Error: Invalid day for February.";
+        }
+        return *this;
+    }
+
+    Validator& checkFutureDate() {
+        if (m_error) return *this; // Short-circuit...
+        time_t now = time(nullptr);
+        tm ltm = *localtime(&now);
+        // This logic correctly checks if the entered year/month/day is after the current date.
+        if (m_year > 1900 + ltm.tm_year ||
+           (m_year == 1900 + ltm.tm_year && m_month > 1 + ltm.tm_mon) ||
+           (m_year == 1900 + ltm.tm_year && m_month == 1 + ltm.tm_mon && m_day > ltm.tm_mday)) {
+            m_error = "Error: Date cannot be in the future.";
+        }
+        return *this;
+    }
+
+    Validator& checkTitle() {
+        if (m_error) return *this; // Short-circuit...
+        // After trimming whitespace, a title shouldn't be empty.
+        if (strlen(m_title) == 0) m_error = "Error: Title cannot be empty.";
+        return *this;
+    }
+
+    Validator& checkUniqueness() {
+        if (m_error) return *this; // Short-circuit...
+        // Asks the DiaryManager if an entry for this date already exists.
+        // This is a great example of the UI layer communicating with the data layer.
+        if (m_diary.entryExistsOnDate(m_date)) {
+            m_error = "Error: An entry for this date already exists.";
+        }
+        return *this;
+    }
+
+    // Private members storing the data needed for validation.
+    const char* m_date;
+    const char* m_title;
+    DiaryManager& m_diary;
+    const char* m_error;
+    int m_year, m_month, m_day;
+};
+
+void drawMainMenuBar(DiaryManager& diary) {
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Exit", "Cmd+Q")) { glfwSetWindowShouldClose(window, GLFW_TRUE); }
+            if (ImGui::MenuItem("Save Now", "Ctrl+S")) {
+                diary.saveDataToFile();
+                s_ui_state.setStatus("Data saved successfully!");
+            }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Navigation")) {
-            if (ImGui::MenuItem("Main Menu", "Cmd+M")) { go_to_screen(Screen::MainMenu); }
-            if (ImGui::MenuItem("Encrypt File", "Cmd+E")) { go_to_screen(Screen::Encrypt); }
-            if (ImGui::MenuItem("Decrypt File", "Cmd+D")) { go_to_screen(Screen::Decrypt); }
-            if (ImGui::MenuItem("Verify Encrypted File", "Cmd+V")) {
-                current_modal = Modal::CompareFilesPrompt;
-                compare_modal_vault_filename_buf[0] = '\0';
-                compare_modal_external_enc_filepath_buf[0] = '\0';
-                compare_modal_pegs_value = MIN_PEG;
-                gui_message.clear();
+        
+        if (ImGui::BeginMenu("Debug")) {
+            if (ImGui::MenuItem("Populate with Sample Entries")) {
+                // Predefined sample data
+                const struct { const char* date; const char* title; const char* content; } samples[] = {
+                    {"2023-01-15", "First Day of a New Project", "Started working on the CipherGUI project. Feeling optimistic about the progress and challenges ahead."},
+                    {"2023-03-22", "A Challenging Bug", "Spent the entire day tracking down a memory leak. Finally found it in the rendering loop. It was a misplaced PopID call."},
+                    {"2023-05-01", "Holiday Trip", "Took a short trip to the mountains. The fresh air was exactly what I needed to clear my head."},
+                    {"2023-08-11", "Presentation Day", "Presented the project prototype today. The feedback was overwhelmingly positive! All the hard work is paying off."},
+                    {"2023-10-26", "Refactoring Old Code", "Decided to refactor the UI manager. It's a lot of work, but it will be worth it for maintainability."}
+                };
+                
+                int added_count = 0;
+                for (const auto& sample : samples) {
+                    // The validator inside addEntry will prevent duplicates if they already exist
+                    if (diary.addEntry(sample.date, sample.title, sample.content)) {
+                        added_count++;
+                    }
+                }
+                s_ui_state.setStatus("Added " + std::to_string(added_count) + " sample entries.");
             }
+
             ImGui::Separator();
-            // Lambda to simplify creating menu items that require admin access
-            auto AdminRestrictedMenuItem = [&](const char* label, Screen target_screen, const char* shortcut = nullptr) {
-                if (ImGui::MenuItem(label, shortcut)) {
-                    if (!admin_access_granted) {
-                         request_admin_access_for_screen(target_screen);
-                    } else {
-                        go_to_screen(target_screen);
-                    }
-                }
-            };
-            AdminRestrictedMenuItem("Retrieve Original File", Screen::GetItem, "Cmd+R");
-            AdminRestrictedMenuItem("View History", Screen::History, "Cmd+H");
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Admin")) {
-            if (admin_access_granted) {
-                if (ImGui::MenuItem("Logout Admin")) {
-                    admin_access_granted = false;
-                    set_main_gui_message("Admin logged out.", MSG_COLOR_INFO);
-                    if (current_screen == Screen::History || current_screen == Screen::GetItem) {
-                        go_to_screen(Screen::MainMenu);
-                    }
-                }
-            } else {
-                if (ImGui::MenuItem("Login Admin", "Cmd+L")) {
-                    request_admin_access_for_screen(current_screen);
-                }
+
+            
+            if (ImGui::MenuItem("!! Delete All Entries !!")) {
+                s_ui_state.open_delete_all_confirmation_popup = true;
             }
             ImGui::EndMenu();
         }
-        accumulated_chrome_height += ImGui::GetFrameHeight();
+        
+        #if ENABLE_SHENANIGANS
+        shenanigans_ui::drawShenanigansMenu();
+        #endif
+
         ImGui::EndMenuBar();
     }
+}
 
-    // --- GUI Message Area ---
-    ImGui::Spacing();
-    accumulated_chrome_height += ImGui::GetStyle().ItemSpacing.y;
-    if (!gui_message.empty()) {
-        ImVec2 msg_text_size = ImGui::CalcTextSize(gui_message.c_str(), nullptr, true, ImGui::GetContentRegionAvail().x);
-        ImGui::PushStyleColor(ImGuiCol_Text, gui_message_color);
-        ImGui::TextWrapped("%s", gui_message.c_str());
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        ImGui::Spacing();
-        accumulated_chrome_height += msg_text_size.y + ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+void drawSelectionActionsToolbar(DiaryManager& diary) {
+    if (s_ui_state.selected_id == -1) {
+        return;
+    }
+    int btn_idx = 0; // Index for shenanigans
+
+    ImGui::BeginDisabled(s_ui_state.selected_index == 0);
+    if (UI_BUTTON("Move Up", btn_idx++)) {
+        diary.moveEntryUp(s_ui_state.selected_id);
+        s_ui_state.selected_index--;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(s_ui_state.selected_index >= diary.getEntryCount() - 1);
+    if (UI_BUTTON("Move Down", btn_idx++)) {
+        diary.moveEntryDown(s_ui_state.selected_id);
+        s_ui_state.selected_index++;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+}
+
+void drawDiaryEntriesTable(DiaryManager& diary) {
+    int btn_idx = 0; // Index for shenanigans
+    if (UI_BUTTON("New Diary Entry", btn_idx++)) {
+        s_ui_state.prepareForNew();
+        ImGui::OpenPopup("New Entry"); 
+    }
+    if (s_ui_state.selected_id != -1) {
+        ImGui::SameLine();
+        if (UI_BUTTON("Clear Selection", btn_idx++)) { s_ui_state.deselect(); }
+    }
+    ImGui::Separator();
+    drawSelectionActionsToolbar(diary);
+
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
+    if (UI_TABLE_BEGIN("diary_table", 3, flags)) {
+        ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Title");
+        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableHeadersRow();
+
+        DiaryEntry* entries = diary.getEntries();
+        for (int i = 0; i < diary.getEntryCount(); ++i) {
+            ImGui::PushID(entries[i].id);
+            ImGui::TableNextRow();
+
+            bool is_selected = (entries[i].id == s_ui_state.selected_id);
+            if (is_selected) {
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_HeaderActive));
+            }
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(entries[i].date);
+
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::Selectable(entries[i].title, is_selected, ImGuiSelectableFlags_None)) {
+                s_ui_state.selected_id = entries[i].id;
+                s_ui_state.selected_index = i;
+            }
+
+            ImGui::TableSetColumnIndex(2); // Actions column
+            if (UI_BUTTON("Open", btn_idx++)) {
+                // This function will now BLOCK until the editor is closed.
+                external_editor::CertifiedEditor(entries[i]); 
+                s_ui_state.setStatus("External editor closed.");
+
+                // Automatically reload after the editor closes.
+                if (external_editor::reloadEntry(entries[i])) {
+            
+                    // After successfully reloading the data into memory,
+                    // we must immediately tell the DiaryManager to save
+                    // all its data back to the main CSV file.
+                    diary.saveDataToFile();
+
+                    s_ui_state.setStatus("Entry updated and saved!");
+                } else {
+                    s_ui_state.setStatus("Error: Content too long or file was deleted.");
+                }
+            }
+            ImGui::SameLine();
+            
+    
+            if (UI_BUTTON("Delete", btn_idx++)) {
+                s_ui_state.entry_id_to_delete = entries[i].id;
+                s_ui_state.open_delete_confirmation_popup = true; // Set flag instead of calling OpenPopup
+            }
+            
+            ImGui::PopID();
+        }
+        UI_TABLE_END();
+    }
+}
+
+void drawNewEntryPopup(DiaryManager& diary) {
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    if (ImGui::BeginPopupModal("New Entry", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        int btn_idx = 0; // Index for shenanigans
+        ImGui::InputText("Date (YYYY-MM-DD)", s_ui_state.new_date, sizeof(s_ui_state.new_date));
+        ImGui::InputText("Title", s_ui_state.new_title, sizeof(s_ui_state.new_title));
+        ImGui::InputTextMultiline("Chikonent", s_ui_state.new_content, sizeof(s_ui_state.new_content), ImVec2(500, 300));
+        
+        if (UI_BUTTON_SIZED("Save", ImVec2(120, 0), btn_idx++)) {
+            trimWhitespace(s_ui_state.new_title);
+            Validator validator(s_ui_state.new_date, s_ui_state.new_title, diary);
+            validator.checkAll();
+            
+            if (validator.isValid()) {
+                diary.addEntry(s_ui_state.new_date, s_ui_state.new_title, s_ui_state.new_content);
+                s_ui_state.setStatus("New entry created successfully.");
+                ImGui::CloseCurrentPopup();
+            } else {
+                s_ui_state.validation_error = validator.getError();
+            }
+        }
+
+        if (s_ui_state.validation_error) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), s_ui_state.validation_error);
+        }
+        
+        ImGui::SameLine();
+        if (UI_BUTTON_SIZED("Cancel", ImVec2(120, 0), btn_idx++)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void drawStatusMessage() {
+    if (s_ui_state.status_message_timer > 0.0f) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImVec2 window_pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x / 2, viewport->WorkPos.y + viewport->WorkSize.y - 40);
+        ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        ImGui::Begin("Status", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+        ImGui::Text("%s", s_ui_state.status_message.c_str());
+        ImGui::End();
+        s_ui_state.status_message_timer -= ImGui::GetIO().DeltaTime;
+    }
+}
+
+
+
+void draw_ui(DiaryManager& diary) {
+    #if ENABLE_SHENANIGANS
+    shenanigans_ui::beginShenanigansFrame();
+    #endif
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_MenuBar;
+    ImGui::Begin("Secretko", nullptr, flags);
+
+
+    // --- Draw the main content of the window ---
+    drawMainMenuBar(diary);
+    drawDiaryEntriesTable(diary);
+
+   
+    if (s_ui_state.open_delete_confirmation_popup) {
+        ImGui::OpenPopup("Confirm Deletion");
+        s_ui_state.open_delete_confirmation_popup = false; // Reset the flag
     }
 
-    // --- Main Content Area ---
-    ImVec2 content_size;
-    if (current_modal == Modal::None) {
-        switch (current_screen) {
-            case Screen::MainMenu:
-                content_size = draw_main_menu_screen();
-                break;
-            case Screen::Encrypt:
-                content_size = draw_encrypt_decrypt_screen(true); // Encrypt Mode
-                break;
-            case Screen::Decrypt:
-                content_size = draw_encrypt_decrypt_screen(false); // Decrypt Mode
-                break;
-            case Screen::GetItem:
-                content_size = draw_get_item_screen();
-                break;
-            case Screen::Compare:
-                // This screen is now effectively just a placeholder, as a modal is used
-                ImGui::TextWrapped("File comparison is handled via the modal dialog under 'Navigation -> Verify Encrypted File'.");
-                if (ImGui::Button("Back to Main Menu")) { go_to_screen(Screen::MainMenu); }
-                content_size = { 400, 100 };
-                break;
-            case Screen::History:
-                content_size = draw_history_screen();
-                break;
-            default: // Failsafe
-                go_to_screen(Screen::MainMenu);
-                content_size = draw_main_menu_screen();
-                break;
+    if (s_ui_state.open_delete_all_confirmation_popup) {
+        ImGui::OpenPopup("Confirm Delete All");
+        s_ui_state.open_delete_all_confirmation_popup = false; // Reset the flag
+    }
+
+    // --- Handle popups that belong to this window ---
+    drawNewEntryPopup(diary);
+
+    // 1. Handle the "Confirm Single Deletion" Popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    
+    if (ImGui::BeginPopupModal("Confirm Deletion", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        int btn_idx = 0; // Index for shenanigans
+        ImGui::Text("Are you sure you want to permanently delete this entry?");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (UI_BUTTON_SIZED("Yes, Delete It", ImVec2(120, 0), btn_idx++)) {
+            // Deselect if we are deleting the selected item
+            if (s_ui_state.entry_id_to_delete == s_ui_state.selected_id) {
+                s_ui_state.deselect();
+            }
+            
+            // Perform the actual deletion
+            diary.deleteEntry(s_ui_state.entry_id_to_delete);
+            
+            s_ui_state.setStatus("Entry successfully deleted!");
+            s_ui_state.entry_id_to_delete = -1; // Reset state
+            ImGui::CloseCurrentPopup();
         }
-    } else {
-        // Provide a default size when a modal is active to prevent window collapse
-        content_size = { MAIN_MENU_MIN_CONTENT_WIDTH, MAIN_MENU_MIN_CONTENT_HEIGHT };
+
+        ImGui::SameLine();
+        if (UI_BUTTON_SIZED("Cancel", ImVec2(120, 0), btn_idx++)) {
+            s_ui_state.setStatus("Deletion canceled.");
+            s_ui_state.entry_id_to_delete = -1; // Reset state
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // 2. Handle the "Confirm Delete All" Popup
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Confirm Delete All", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        int btn_idx = 0; // Index for shenanigans
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: This is permanent!");
+        ImGui::Text("Are you sure you want to delete ALL diary entries?");
+        ImGui::Text("This action cannot be undone.");
+        ImGui::Separator();
+
+        if (UI_BUTTON_SIZED("Confirm Delete All", ImVec2(150, 0), btn_idx++)) {
+            diary.deleteAllEntries(); // This should call saveDataToFile() internally
+            s_ui_state.deselect();
+            s_ui_state.setStatus("All entries have been deleted.");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (UI_BUTTON_SIZED("Cancel", ImVec2(120, 0), btn_idx++)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::End();
-    return {content_size, accumulated_chrome_height};
+
+    // --- Draw global overlays ---
+    drawStatusMessage();
 }
 
-void UIManager::go_to_screen(Screen screen) {
-    if (current_screen != screen) {
-         gui_message.clear();
-    }
-    current_screen = screen;
-
-    switch (screen) {
-        case Screen::MainMenu:
-            admin_access_granted = false; // Logout admin on returning to main menu
-            clear_all_persistent_state();
-            set_main_gui_message("Welcome to Cipher GUI!", MSG_COLOR_INFO);
-            break;
-        case Screen::GetItem:
-            get_item_filename_buf[0] = '\0';
-            get_item_destination_buf[0] = '\0';
-            break;
-        case Screen::History:
-            if (admin_access_granted) {
-                load_history_content();
-            }
-            break;
-        // Other screens don't need special setup
-        case Screen::Encrypt:
-        case Screen::Decrypt:
-        case Screen::Compare:
-        default:
-            break;
-    }
-}
-
-void UIManager::set_main_gui_message(const std::string& message, const ImVec4& color) {
-    gui_message = message;
-    gui_message_color = color;
-}
-
-void UIManager::load_history_content() {
-    std::ifstream ifs(HISTORY_FILE);
-    if (ifs) {
-        std::stringstream ss;
-        ss << ifs.rdbuf();
-        history_content_buf = ss.str();
-        if (history_content_buf.empty()) {
-            history_content_buf = "History is empty.";
-        }
-    } else {
-        history_content_buf = "Error: Could not open history file: " + HISTORY_FILE;
-    }
-}
-
-void UIManager::request_admin_access_for_screen(Screen target_screen) {
-    screen_requiring_password = target_screen;
-    current_modal = Modal::AdminPasswordPrompt;
-    gui_message.clear();
-}
-
-ImVec2 UIManager::draw_main_menu_screen() {
-    float button_width = MAIN_MENU_MIN_CONTENT_WIDTH;
-    const float button_height = 35.0f;
-
-    ImGui::TextUnformatted("Main Menu");
-    ImGui::Separator();
-    ImGui::Dummy({0, 10.0f});
-
-    struct MenuItem {
-        const char* label;
-        Screen screen_to_open;
-        Modal modal_to_open;
-        bool requires_admin;
-    };
-
-    const MenuItem menu_items[] = {
-        {"Encrypt File",           Screen::Encrypt,  Modal::None,                false},
-        {"Decrypt File",           Screen::Decrypt,  Modal::None,                false},
-        {"Retrieve Original File", Screen::GetItem,  Modal::None,                true},
-        {"Verify Encrypted File",  Screen::MainMenu, Modal::CompareFilesPrompt,  false},
-        {"View History",           Screen::History,  Modal::None,                true}
-    };
-
-    for (const auto& item : menu_items) {
-        if (ImGui::Button(item.label, {button_width, button_height})) {
-            if (item.requires_admin && !admin_access_granted) {
-                request_admin_access_for_screen(item.screen_to_open);
-            } else {
-                if (item.modal_to_open != Modal::None) {
-                    current_modal = item.modal_to_open;
-                    if (item.modal_to_open == Modal::CompareFilesPrompt) {
-                        compare_modal_vault_filename_buf[0] = '\0';
-                        compare_modal_external_enc_filepath_buf[0] = '\0';
-                        compare_modal_pegs_value = MIN_PEG;
-                    }
-                    gui_message.clear();
-                } else {
-                    go_to_screen(item.screen_to_open);
-                }
-            }
-        }
-        ImGui::Dummy({0, 5.0f});
-    }
-
-    return {MAIN_MENU_MIN_CONTENT_WIDTH, std::max(MAIN_MENU_MIN_CONTENT_HEIGHT, ImGui::GetCursorPosY())};
-}
-
-ImVec2 UIManager::draw_encrypt_decrypt_screen(bool is_encrypt_mode) {
-    const char* title = is_encrypt_mode ? "Encrypt File & Vault Original" : "Decrypt File";
-    ImGui::TextUnformatted(title);
-    ImGui::Separator();
-
-    ImGui::PushItemWidth(-1); // Use full available width
-    ImGui::InputTextWithHint("##InputFilePath", "Input File Path", input_file_path_buf, sizeof(input_file_path_buf));
-    if (!is_encrypt_mode) {
-        ImGui::InputTextWithHint("##OutputFilePath", "Output File Path", output_file_path_buf, sizeof(output_file_path_buf));
-    }
-    ImGui::InputInt("Pegs", &pegs_value);
-    pegs_value = std::clamp(pegs_value, MIN_PEG, MAX_PEG);
-    ImGui::PopItemWidth();
-
-    ImGui::Dummy({0, 10.0f});
-
-    float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-    if (ImGui::Button(is_encrypt_mode ? "Encrypt & Vault" : "Decrypt", {button_width, 0})) {
-        gui_message.clear();
-        std::ostringstream captured_output;
-        CerrRedirect redirect(captured_output.rdbuf());
-        bool success = false;
-
-        if (is_encrypt_mode) {
-            success = encrypt_file(input_file_path_buf, pegs_value);
-        } else {
-            success = decrypt_file(input_file_path_buf, output_file_path_buf, pegs_value);
-        }
-
-        std::string op_msg = captured_output.str();
-        if (success) {
-            set_main_gui_message(std::string(is_encrypt_mode ? "Encryption" : "Decryption") + " successful!" + (op_msg.empty() ? "" : "\nLog:\n" + op_msg), MSG_COLOR_SUCCESS);
-            input_file_path_buf[0] = '\0';
-            if (!is_encrypt_mode) output_file_path_buf[0] = '\0';
-        } else {
-            set_main_gui_message("Operation failed." + (op_msg.empty() ? "" : "\nDetails:\n" + op_msg), MSG_COLOR_ERROR);
-        }
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Back to Main Menu", {button_width, 0})) {
-        go_to_screen(Screen::MainMenu);
-    }
-    
-    return {ENCRYPT_DECRYPT_MIN_CONTENT_WIDTH, std::max(ENCRYPT_DECRYPT_MIN_CONTENT_HEIGHT, ImGui::GetCursorPosY())};
-}
-
-ImVec2 UIManager::draw_get_item_screen() {
-    ImGui::TextUnformatted("Retrieve Original File from Vault");
-    ImGui::Separator();
-
-    ImGui::PushItemWidth(-1);
-    ImGui::InputTextWithHint("##GetItemFilename", "Filename in Vault (e.g., original.txt)", get_item_filename_buf, sizeof(get_item_filename_buf));
-    ImGui::InputTextWithHint("##GetItemDest", "Full Destination Path (e.g., C:\\Users\\user\\Desktop\\retrieved.txt)", get_item_destination_buf, sizeof(get_item_destination_buf));
-    ImGui::PopItemWidth();
-    ImGui::Dummy({0, 10.0f});
-
-    float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-    if (ImGui::Button("Retrieve File", {button_width, 0})) {
-        gui_message.clear();
-        if (get_item_filename_buf[0] == '\0' || get_item_destination_buf[0] == '\0') {
-            set_main_gui_message("Error: Both fields are required.", MSG_COLOR_ERROR);
-        } else {
-            std::ostringstream captured_output;
-            CerrRedirect redirect(captured_output.rdbuf());
-            bool success = retrieve_from_vault(get_item_filename_buf, get_item_destination_buf);
-            std::string op_msg = captured_output.str();
-            if (success) {
-                set_main_gui_message("File retrieval successful!" + (op_msg.empty() ? "" : "\nLog:\n" + op_msg), MSG_COLOR_SUCCESS);
-                get_item_filename_buf[0] = '\0';
-                get_item_destination_buf[0] = '\0';
-            } else {
-                set_main_gui_message("File retrieval failed." + (op_msg.empty() ? "" : "\nDetails:\n" + op_msg), MSG_COLOR_ERROR);
-            }
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Back to Main Menu", {button_width, 0})) {
-        go_to_screen(Screen::MainMenu);
-    }
-
-    return {GET_ITEM_MIN_CONTENT_WIDTH, std::max(GET_ITEM_MIN_CONTENT_HEIGHT, ImGui::GetCursorPosY())};
-}
-
-ImVec2 UIManager::draw_history_screen() {
-    ImGui::TextUnformatted("Operation History");
-    ImGui::Separator();
-
-    float bottom_elements_height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
-    ImGui::InputTextMultiline("##HistoryContent", &history_content_buf, {-1, -bottom_elements_height}, ImGuiInputTextFlags_ReadOnly);
-
-    float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-    if (ImGui::Button("Refresh History", {button_width, 0})) {
-        load_history_content();
-        set_main_gui_message("History refreshed.", MSG_COLOR_INFO);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Back to Main Menu", {button_width, 0})) {
-        go_to_screen(Screen::MainMenu);
-    }
-
-    return {HISTORY_MIN_CONTENT_WIDTH, std::max(HISTORY_MIN_CONTENT_HEIGHT, ImGui::GetCursorPosY())};
-}
-
-void UIManager::draw_admin_password_prompt_modal(const std::string& prompt_message) {
-    ImGui::OpenPopup("Admin Password Modal");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
-
-    if (ImGui::BeginPopupModal("Admin Password Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::TextUnformatted(prompt_message.c_str());
-        ImGui::Separator();
-        ImGui::Dummy({0, 5.0f});
-        ImGui::TextUnformatted("Please enter the admin password:");
-        ImGui::PushItemWidth(250);
-        bool enter_pressed = ImGui::InputText("##AdminPasswordInput", admin_password_buf, sizeof(admin_password_buf), ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::PopItemWidth();
-        ImGui::Dummy({0, 10.0f});
-
-        if (enter_pressed || ImGui::Button("Login", {120, 0})) {
-            if (check_admin_password(admin_password_buf)) {
-                admin_access_granted = true;
-                current_modal = Modal::None;
-                set_main_gui_message("Admin access granted.", MSG_COLOR_SUCCESS);
-                go_to_screen(screen_requiring_password);
-                ImGui::CloseCurrentPopup();
-            } else {
-                set_main_gui_message("Incorrect admin password.", MSG_COLOR_ERROR);
-            }
-            admin_password_buf[0] = '\0';
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", {120, 0})) {
-            current_modal = Modal::None;
-            gui_message.clear();
-            admin_password_buf[0] = '\0';
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
-
-void UIManager::draw_compare_files_modal() {
-    ImGui::OpenPopup("Compare Encrypted File Modal");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
-    ImGui::SetNextWindowSize({ENCRYPT_DECRYPT_MIN_CONTENT_WIDTH, 0}, ImGuiCond_Appearing);
-
-    if (ImGui::BeginPopupModal("Compare Encrypted File Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-        ImGui::TextUnformatted("Verify Encrypted File");
-        ImGui::TextWrapped("This compares an in-memory encryption of a vault file against an existing external encrypted file.");
-        ImGui::Separator();
-        ImGui::Dummy({0, 5.0f});
-
-        ImGui::PushItemWidth(-1);
-        ImGui::InputTextWithHint("##VaultFileModal", "Filename in Vault (e.g., original.txt)", compare_modal_vault_filename_buf, MAX_PATH_LEN);
-        ImGui::InputTextWithHint("##ExternalEncFileModal", "Path to External Encrypted File", compare_modal_external_enc_filepath_buf, MAX_PATH_LEN);
-        ImGui::InputInt("Pegs Used for Encryption", &compare_modal_pegs_value);
-        compare_modal_pegs_value = std::clamp(compare_modal_pegs_value, MIN_PEG, MAX_PEG);
-        ImGui::PopItemWidth();
-        
-        ImGui::Separator();
-        ImGui::Dummy({0, 5.0f});
-
-        float button_width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-        if (ImGui::Button("Compare", {button_width, 0})) {
-            gui_message.clear();
-            std::string vault_filename(compare_modal_vault_filename_buf);
-            std::string external_enc_path(compare_modal_external_enc_filepath_buf);
-
-            if (vault_filename.empty() || external_enc_path.empty()) {
-                set_main_gui_message("Error: All fields must be provided.", MSG_COLOR_ERROR);
-            } else {
-                // Use our own path helpers instead of std::filesystem
-                std::string vault_file_full_path = path_join(PRIVATE_VAULT_DIR, vault_filename);
-                std::string error_msg;
-                bool problem = false;
-
-                if (!is_regular_file(vault_file_full_path)) {
-                    error_msg += "Error: Vault file not found. ";
-                    problem = true;
-                }
-                if (!is_regular_file(external_enc_path)) {
-                    error_msg += "Error: External file not found.";
-                    problem = true;
-                }
-
-                if (problem) {
-                    set_main_gui_message(error_msg, MSG_COLOR_ERROR);
-                } else {
-                    std::string vault_content = load_file_content_to_string(vault_file_full_path, MAX_TEXT_COMPARE_DISPLAY_CHARS);
-                    std::string external_enc_content = load_file_content_to_string(external_enc_path, MAX_TEXT_COMPARE_DISPLAY_CHARS);
-                    
-                    std::string in_memory_encrypted_content = process_content_caesar(vault_content, compare_modal_pegs_value, true);
-                    TextCompareResult res = compare_string_contents(in_memory_encrypted_content, external_enc_content);
-                    
-                    std::ostringstream result_ss;
-                    result_ss.precision(2);
-                    result_ss << "Verification Result: Match: " << std::fixed << res.match_percentage << "%.";
-                    if (res.first_diff_offset != -1) {
-                        result_ss << " First diff at offset: " << res.first_diff_offset << ".";
-                    } else if (res.match_percentage >= 99.99f) {
-                        result_ss << " Contents appear identical.";
-                    }
-                    set_main_gui_message(result_ss.str(), (res.match_percentage >= 99.99f) ? MSG_COLOR_SUCCESS : MSG_COLOR_WARNING);
-                }
-            }
-            current_modal = Modal::None;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", {button_width, 0})) {
-            current_modal = Modal::None;
-            gui_message.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
+} // namespace ui_manager
