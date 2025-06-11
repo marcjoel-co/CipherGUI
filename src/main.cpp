@@ -40,11 +40,11 @@ int main()
   
     //  version of OpenGL (3.3).
     const char* glsl_version = "#version 130";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-    // Now, create the actual window.
+    
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); 
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); 
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); 
+   
     // Parameters: width, height, "Title in the title bar", and two nullptrs for advanced stuff.
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Diary Manager", nullptr, nullptr);
     if (window == nullptr) {
@@ -66,7 +66,7 @@ int main()
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io; // Get a reference to the ImGui Input/Output object.
     
-    // Set the visual theme. We're using the default dark theme.
+    // Set the visual theme. 
     ImGui::StyleColorsDark();
 
     //This connects ImGui to our window (GLFW) and our renderer (OpenGL).
@@ -77,9 +77,7 @@ int main()
    
     DiaryManager myDiary;
 
-    // --- PHASE 4: THE MAIN LOOP (The "Game Loop") ---
-    // This loop runs continuously until the user closes the window.
-    // Each iteration of the loop draws one frame.
+    // THE MAIN LOOP (The "Game Loop") ---
     while (!glfwWindowShouldClose(window)) {
         // Handle Input
         glfwPollEvents();

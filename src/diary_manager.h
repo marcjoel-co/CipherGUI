@@ -20,7 +20,7 @@ struct DiaryEntry
 class DiaryManager
 
 {
-public: // "public" means these functions can be called from outside the class 
+public: 
     // called automatically.
     DiaryManager();  // The Constructor:  for setup.
     ~DiaryManager(); // The Destructor: for cleanup.
@@ -35,7 +35,7 @@ public: // "public" means these functions can be called from outside the class
     bool addEntry(const char *date, const char *title, const char *content);
 
     /**
-     * @brief Updates an existing entry identified by its ID with new data.
+     * @brief Updates  existing entry identified by its ID with new data.
      * @return true if the entry was found and updated, false otherwise.
      */
     bool updateEntry(int id, const char *date, const char *title, const char *content);

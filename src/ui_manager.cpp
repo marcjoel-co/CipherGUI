@@ -9,37 +9,17 @@
 #include <ctime>     // For getting the current date to validate against future dates.
 #include <cstdio>    // For sscanf to parse the date string.
 #include <string>    // For std::string, used in the status message.
+#include <regex>
 
-// --- COMPILE-TIME SWITCH FOR SHENANIGANS ---
-// This is a preprocessor macro. If you change this to 1, the code will use the
-// "shenanigans" UI functions instead of the standard ImGui ones. This is a fantastic
-// way to toggle experimental or debug features.
-#define ENABLE_SHENANIGANS 0
-
-#if ENABLE_SHENANIGANS
-    #include "for_shenanigans_ui_demo.h"
-
-    // When shenanigans are enabled, these macros redirect our UI calls to the fun versions.
-    #define UI_BUTTON(label, index) shenanigans_ui::ulol(label, index)
-    #define UI_BUTTON_SIZED(label, size, index) shenanigans_ui::ulol(label, index)
-    #define UI_TABLE_BEGIN(name, cols, flags) shenanigans_ui::ulolTable(name, cols, flags)
-    #define UI_TABLE_END() shenanigans_ui::EndTable()
-#else
-    // When shenanigans are disabled, these macros are just aliases for the normal ImGui functions.
-    // This lets us use `UI_BUTTON` everywhere in our code without an `if/else` block each time.
-    #define UI_BUTTON(label, index) ImGui::Button(label)
-    #define UI_BUTTON_SIZED(label, size, index) ImGui::Button(label, size)
-    #define UI_TABLE_BEGIN(name, cols, flags) ImGui::BeginTable(name, cols, flags)
-    #define UI_TABLE_END() ImGui::EndTable()
-#endif
+#define UI_BUTTON(label, index) ImGui::Button(label)
+#define UI_BUTTON_SIZED(label, size, index) ImGui::Button(label, size)
+#define UI_TABLE_BEGIN(name, cols, flags) ImGui::BeginTable(name, cols, flags)
+#define UI_TABLE_END() ImGui::EndTable()
 
 
 namespace ui_manager {
 
-// --- UI STATE MANAGEMENT ---
-// ImGui is an "immediate mode" library, meaning it redraws everything from scratch each
-// frame. It doesn't store state (like which item is selected). So, we must do it ourselves.
-// This `UIState` struct acts as the "short-term memory" for our entire UI.
+
 struct UIState {
     // Buffers for the "New Entry" popup text fields.
     char new_date[32] = "YYYY-MM-DD";
@@ -83,35 +63,35 @@ struct UIState {
     }
 };
 
-// `static` means there is only ONE instance of this struct for the entire file.
-// Its data persists across multiple calls to `draw_ui`, which is how our UI "remembers" things.
+
+// Its data persists across multiple calls 
 static UIState s_ui_state;
 
-// --- HELPER FUNCTIONS ---
+
 
 // A utility to trim leading/trailing whitespace from user input.
 void trimWhitespace(char* str) {
-    if (!str || *str == '\0') return;
-    char* start = str;
-    while (isspace(static_cast<unsigned char>(*start))) start++;
-    char* dest = str;
-    while (*start != '\0') *dest++ = *start++;
+    if (!str || *str == '\0') return; // if str is not empty
+    char* start = str;  // begin
+    while (isspace(static_cast<unsigned char>(*start))) start++; // start of character
+    char* dest = str; // will be stored position                 
+    while (*start != '\0') *dest++ = *start++;                  
     *dest = '\0';
+
+    //works backward
     char* end = dest - 1;
     while (end >= str && isspace(static_cast<unsigned char>(*end))) end--;
     *(end + 1) = '\0';
 }
 
-// --- INPUT VALIDATION LOGIC ---
-// This class is a masterpiece of good design. It isolates all the complex validation
-// rules into a single, reusable place.
+
 class Validator {
 public:
     // The constructor takes all the data it needs to perform its checks.
     Validator(const char* date, const char* title, DiaryManager& diary)
         : m_date(date), m_title(title), m_diary(diary), m_error(nullptr) {}
 
-    // This is the main entry point. It uses a "fluent interface" or "method chaining".
+    // This is the main entry point
     // Each `check...` function returns a reference to itself, allowing us to chain calls together.
     Validator& checkAll() {
         checkDateFormat()
@@ -128,19 +108,36 @@ public:
     const char* getError() const { return m_error; }
 
 private:
-    // This is the key to the fluent interface: if an error has already been found,
-    // all subsequent checks are instantly skipped. This is efficient and clean.
+   
+    // all subsequent checks .
     Validator& checkDateFormat() {
         if (m_error) return *this; // Short-circuit if already failed.
-        if (sscanf(m_date, "%d-%d-%d", &m_year, &m_month, &m_day) != 3) {
-            m_error = "Error: Date format must be YYYY-MM-DD.";
+        if (m_error) return *this;
+
+                // This regex pattern means:
+                // ^        - Start of the string
+                // \d{4}    - Exactly 4 digits
+                // -        - A literal hyphen
+                // \d{2}    - 2 digits
+                // -        - hyphen
+                // \d{2}    - E 2 digits
+                // $        - End string
+        const std::regex pattern(R"(^\d{4}-\d{2}-\d{2}$)");
+
+        if (!std::regex_match(m_date, pattern)) {
+            m_error = "Error: Date format must be exactly YYYY-MM-DD.";
+            return *this; // Exit early if the format is wrong
         }
+
+        
+        sscanf(m_date, "%d-%d-%d", &m_year, &m_month, &m_day);
+        
         return *this;
     }
+    
 
     Validator& checkDateLogic() {
-        if (m_error) return *this; // Short-circuit...
-        if (m_month < 1 || m_month > 12 || m_day < 1 || m_day > 31) m_error = "Error: Invalid month or day.";
+        if (m_error) return *this; 
         else if ((m_month == 4 || m_month == 6 || m_month == 9 || m_month == 11) && m_day > 30) m_error = "Error: Invalid day for this month.";
         else if (m_month == 2) {
             bool isLeap = (m_year % 4 == 0 && (m_year % 100 != 0 || m_year % 400 == 0));
@@ -153,7 +150,7 @@ private:
         if (m_error) return *this; // Short-circuit...
         time_t now = time(nullptr);
         tm ltm = *localtime(&now);
-        // This logic correctly checks if the entered year/month/day is after the current date.
+        
         if (m_year > 1900 + ltm.tm_year ||
            (m_year == 1900 + ltm.tm_year && m_month > 1 + ltm.tm_mon) ||
            (m_year == 1900 + ltm.tm_year && m_month == 1 + ltm.tm_mon && m_day > ltm.tm_mday)) {
@@ -163,7 +160,7 @@ private:
     }
 
     Validator& checkTitle() {
-        if (m_error) return *this; // Short-circuit...
+        if (m_error) return *this; // Short-circ
         // After trimming whitespace, a title shouldn't be empty.
         if (strlen(m_title) == 0) m_error = "Error: Title cannot be empty.";
         return *this;
@@ -179,7 +176,7 @@ private:
         return *this;
     }
 
-    // Private members storing the data needed for validation.
+    // Private members 
     const char* m_date;
     const char* m_title;
     DiaryManager& m_diary;
@@ -210,7 +207,7 @@ void drawMainMenuBar(DiaryManager& diary) {
                 
                 int added_count = 0;
                 for (const auto& sample : samples) {
-                    // The validator inside addEntry will prevent duplicates if they already exist
+                 
                     if (diary.addEntry(sample.date, sample.title, sample.content)) {
                         added_count++;
                     }
@@ -227,9 +224,7 @@ void drawMainMenuBar(DiaryManager& diary) {
             ImGui::EndMenu();
         }
         
-        #if ENABLE_SHENANIGANS
-        shenanigans_ui::drawShenanigansMenu();
-        #endif
+      
 
         ImGui::EndMenuBar();
     }
@@ -239,7 +234,7 @@ void drawSelectionActionsToolbar(DiaryManager& diary) {
     if (s_ui_state.selected_id == -1) {
         return;
     }
-    int btn_idx = 0; // Index for shenanigans
+    // int btn_idx = 0; // Index for shenanigans
 
     ImGui::BeginDisabled(s_ui_state.selected_index == 0);
     if (UI_BUTTON("Move Up", btn_idx++)) {
@@ -261,7 +256,7 @@ void drawSelectionActionsToolbar(DiaryManager& diary) {
 }
 
 void drawDiaryEntriesTable(DiaryManager& diary) {
-    int btn_idx = 0; // Index for shenanigans
+    int btn_idx = 0;
     if (UI_BUTTON("New Diary Entry", btn_idx++)) {
         s_ui_state.prepareForNew();
         ImGui::OpenPopup("New Entry"); 
@@ -337,7 +332,7 @@ void drawNewEntryPopup(DiaryManager& diary) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     
     if (ImGui::BeginPopupModal("New Entry", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        int btn_idx = 0; // Index for shenanigans
+        // int btn_idx = 0; // Index for shenanigans
         ImGui::InputText("Date (YYYY-MM-DD)", s_ui_state.new_date, sizeof(s_ui_state.new_date));
         ImGui::InputText("Title", s_ui_state.new_title, sizeof(s_ui_state.new_title));
         ImGui::InputTextMultiline("Chikonent", s_ui_state.new_content, sizeof(s_ui_state.new_content), ImVec2(500, 300));
@@ -398,30 +393,29 @@ void draw_ui(DiaryManager& diary) {
     ImGui::Begin("Secretko", nullptr, flags);
 
 
-    // --- Draw the main content of the window ---
     drawMainMenuBar(diary);
     drawDiaryEntriesTable(diary);
 
    
     if (s_ui_state.open_delete_confirmation_popup) {
         ImGui::OpenPopup("Confirm Deletion");
-        s_ui_state.open_delete_confirmation_popup = false; // Reset the flag
+        s_ui_state.open_delete_confirmation_popup = false; 
     }
 
     if (s_ui_state.open_delete_all_confirmation_popup) {
         ImGui::OpenPopup("Confirm Delete All");
-        s_ui_state.open_delete_all_confirmation_popup = false; // Reset the flag
+        s_ui_state.open_delete_all_confirmation_popup = false; 
     }
 
-    // --- Handle popups that belong to this window ---
+    
     drawNewEntryPopup(diary);
 
-    // 1. Handle the "Confirm Single Deletion" Popup
+   
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     
     if (ImGui::BeginPopupModal("Confirm Deletion", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        int btn_idx = 0; // Index for shenanigans
+        // int btn_idx = 0; // Index for shenanigans
         ImGui::Text("Are you sure you want to permanently delete this entry?");
         ImGui::Separator();
         ImGui::Spacing();
@@ -452,7 +446,7 @@ void draw_ui(DiaryManager& diary) {
     // 2. Handle the "Confirm Delete All" Popup
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Confirm Delete All", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        int btn_idx = 0; // Index for shenanigans
+        // int btn_idx = 0; // Index for shenanigans
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: This is permanent!");
         ImGui::Text("Are you sure you want to delete ALL diary entries?");
         ImGui::Text("This action cannot be undone.");
@@ -473,7 +467,7 @@ void draw_ui(DiaryManager& diary) {
 
     ImGui::End();
 
-    // --- Draw global overlays ---
+    
     drawStatusMessage();
 }
 

@@ -29,6 +29,6 @@ namespace ui_manager {
      */
     void draw_ui(DiaryManager& diary);
 
-} // end of namespace ui_manager
+}
 
 #endif // UI_MANAGER_H
