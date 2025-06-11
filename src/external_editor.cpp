@@ -7,9 +7,9 @@
 #include "external_editor.h"
 #include <string>
 #include <fstream>
-#include <cstdlib>   // For system()
-#include <cstdio>    // For remove()
-#include <cstring>   // For strncpy
+#include <cstdlib>   
+#include <cstdio>    
+#include <cstring>   
 
 namespace external_editor 
 {
@@ -31,7 +31,7 @@ void launchEditor(const std::string& filename) {
     system(command.c_str());
 }
 
-// --- PUBLIC FUNCTIONS ---
+
 
 // This is the main function called when the user clicks "Open".
 // It creates the temp file and launches the editor.
@@ -56,14 +56,14 @@ bool reloadEntry(DiaryEntry& entry) {
 
     std::ifstream file(filename);
     if (!file.is_open()) {
-        printf("DEBUG: reloadEntry FAILED. File could not be opened.\n");
+        printf("loadEntry FAILED. File  not be opened.\n");
         return false;
     }
 
     std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     file.close();
 
-    printf("DEBUG: File read successfully. Content length: %zu, Buffer capacity: %zu\n", content.length(), sizeof(entry.content));
+    printf("successfully. Content length: %zu, Buffer capacity: %zu\n", content.length(), sizeof(entry.content));
 
 
     if (content.length() >= sizeof(entry.content)) {

@@ -178,7 +178,7 @@ private:
 
     Validator& checkTitle() {
         if (m_error) return *this; // Short-circ
-        // After trimming whitespace, a title shouldn't be empty.
+    
         if (strlen(m_title) == 0) m_error = "Error: Title cannot be empty.";
         return *this;
     }

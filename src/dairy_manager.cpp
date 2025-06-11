@@ -18,8 +18,8 @@
  */
 std::string escapeCsvField(const char *field)
 {
-    std::string str_field(field); 
-    // If the field contains any special character, it needs to be processed.
+    std::string str_field(field);
+    // If the field contains any special character
     if (str_field.find(',') != std::string::npos ||
         str_field.find('"') != std::string::npos ||
         str_field.find('\n') != std::string::npos)
@@ -27,7 +27,7 @@ std::string escapeCsvField(const char *field)
         std::string result = "\""; // Start with a quote.
         // Loop over each character to check for quotes that need escaping.
         for (char c : str_field)
-        {    
+        {
             if (c == '"')
                 result += "\"\""; // An inner quote becomes two quotes.
             else
@@ -57,11 +57,11 @@ bool parseCsvLineToEntry(const std::string &line, DiaryEntry &out_entry)
     // Loop as long as there's content in the line and we haven't read all 4 fields yet.
     while (ss.good() && field_index < 4)
     {
-        char c = ss.peek(); 
+        char c = ss.peek();
         // Iquote mode
         if (c == '"')
         {
-            ss.get(); 
+            ss.get();
             field.clear();
             while (ss.good()) // if stream is
             {
@@ -69,7 +69,7 @@ bool parseCsvLineToEntry(const std::string &line, DiaryEntry &out_entry)
 
                 if (current_char == '"')
                 {
-                                          //           v              v        V
+               
                     if (ss.peek() == '"') //"John Doe,""123 Main St."",456-7890"`
                     {
                         field += '"'; // Add a single quote to our field.
@@ -164,14 +164,13 @@ bool DiaryManager::addEntry(const char *date, const char *title, const char *con
     strncpy(new_entry.date, date, sizeof(new_entry.date) - 1);
     strncpy(new_entry.title, title, sizeof(new_entry.title) - 1);
     strncpy(new_entry.content, content, sizeof(new_entry.content) - 1);
-    
+
     new_entry.date[sizeof(new_entry.date) - 1] = '\0';
     new_entry.title[sizeof(new_entry.title) - 1] = '\0';
     new_entry.content[sizeof(new_entry.content) - 1] = '\0';
     entry_count++;
     return true;
 }
-
 
 bool DiaryManager::deleteEntry(int id)
 {
@@ -220,8 +219,6 @@ void DiaryManager::deleteAllEntries()
     saveDataToFile(); // Save an empty state to the file, effectively deleting all data.
 }
 
-
-
 DiaryEntry *DiaryManager::getEntryById(int id) const
 {
     int index = findEntryIndex(id);
@@ -240,8 +237,7 @@ bool DiaryManager::entryExistsOnDate(const char *date) const
     return false; // No match found.
 }
 
-
-// 
+//
 int DiaryManager::findEntryIndex(int id) const
 {
     for (int i = 0; i < entry_count; ++i)
@@ -279,13 +275,13 @@ void DiaryManager::saveDataToFile()
     file << "id,date,title,content\n"; // Write the CSV header.
     for (int i = 0; i < entry_count; ++i)
     {
-        // For each entry, write a line, using our helper to keep the data safe.
+        // For each entry, write a line, .
         file << entries[i].id << ","
              << escapeCsvField(entries[i].date) << ","
              << escapeCsvField(entries[i].title) << ","
              << escapeCsvField(entries[i].content) << "\n";
     }
-    file.close(); 
+    file.close();
 }
 
 // The loading method.
@@ -310,7 +306,7 @@ void DiaryManager::loadDataFromFile()
     if (entry_line_count == 0)
     {
         file.close();
-        return; 
+        return;
     }
     entry_count = entry_line_count;
     entry_capacity = entry_line_count;
@@ -332,7 +328,7 @@ void DiaryManager::loadDataFromFile()
         {
             //
             max_id = std::max(max_id, entries[current_index].id);
-            current_index++; // Only advance if the line was valid.
+            current_index++; 
         }
     }
     file.close();
