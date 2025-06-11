@@ -87,7 +87,7 @@ void trimWhitespace(char* str) {
 
 class Validator {
 public:
-    // The constructor takes all the data it needs to perform its checks.
+    
     Validator(const char* date, const char* title, DiaryManager& diary)
         : m_date(date), m_title(title), m_diary(diary), m_error(nullptr) {}
 
@@ -137,14 +137,31 @@ private:
     
 
     Validator& checkDateLogic() {
-        if (m_error) return *this; 
-        else if ((m_month == 4 || m_month == 6 || m_month == 9 || m_month == 11) && m_day > 30) m_error = "Error: Invalid day for this month.";
-        else if (m_month == 2) {
-            bool isLeap = (m_year % 4 == 0 && (m_year % 100 != 0 || m_year % 400 == 0));
-            if (m_day > (isLeap ? 29 : 28)) m_error = "Error: Invalid day for February.";
-        }
+    // If an error already exists, do nothing.
+    if (m_error) {
         return *this;
     }
+
+    // Check if month is in the valid range (1-12).
+    if (m_month < 1 || m_month > 12) {
+        m_error = "Error: Month must be between 1 and 12.";
+    }
+    //  Fundamental validation: Check if day is in a plausible range (1-31).
+    else if (m_day < 1 || m_day > 31) {
+        m_error = "Error: Day must be between 1 and 31.";
+    }
+    //  Specific validation 
+    else if ((m_month == 4 || m_month == 6 || m_month == 9 || m_month == 11) && m_day > 30) {
+        m_error = "Error: Invalid day. This month has only 30 days.";
+    } else if (m_month == 2) {
+        bool isLeap = (m_year % 4 == 0 && (m_year % 100 != 0 || m_year % 400 == 0));
+        if (m_day > (isLeap ? 29 : 28)) {
+            m_error = "Error: Invalid day for February in the given year.";
+        }
+    }
+    
+    return *this;
+}
 
     Validator& checkFutureDate() {
         if (m_error) return *this; // Short-circuit...

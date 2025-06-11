@@ -47,6 +47,7 @@ SRCS = src/main.cpp \
        lib/imgui/backends/imgui_impl_opengl3.cpp
 
 # This line automatically creates the .o list from the .cpp list. 
+OBJS = $(SRCS:.cpp=.o)
 
 # The final executable name is updated to match the project theme.
 TARGET = DiaryManager.exe
