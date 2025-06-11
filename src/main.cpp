@@ -1,5 +1,5 @@
 /**
- *  @brief: THe main.cpp, sets up the 
+ *  @brief: THe main.cpp, sets up everything
  */
 // ImGui Dependecies
 #include "imgui.h"                  // The main ImGui library for drawing widgets.

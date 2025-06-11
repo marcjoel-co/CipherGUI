@@ -11,7 +11,7 @@ namespace external_editor {
      * @param entry The diary entry to open.
      */
     void CertifiedEditor(const DiaryEntry& entry);
-
+    
     /**
      * @brief Reads the content from the temporary file, updates the entry in memory,
      *        and deletes the temporary file.

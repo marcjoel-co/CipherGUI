@@ -3,13 +3,13 @@
 // This is a "header guard".
 #pragma once
 
-//  type for our filename.
+
 #include <string>
 
-// --- Data Structure Definition ---
+
 struct DiaryEntry
 {
-    int id;             // A unique number
+    int id;             
     char date[32];      // The date of the entry,
     char title[128];    // The title of the entry.
     char content[9999]; // The main text content of the entry.
@@ -33,12 +33,6 @@ public:
      * @return true if the entry was added, false otherwise (e.g., date duplicate).
      */
     bool addEntry(const char *date, const char *title, const char *content);
-
-    /**
-     * @brief Updates  existing entry identified by its ID with new data.
-     * @return true if the entry was found and updated, false otherwise.
-     */
-    bool updateEntry(int id, const char *date, const char *title, const char *content);
 
     /**
      * @brief Deletes an entry from the collection using its unique ID.

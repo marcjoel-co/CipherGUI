@@ -1,12 +1,6 @@
 id,date,title,content
-1,2024-12-06,"You are special """""""""""""",,,,",YOu are here right?
-3,2023-01-15,First Day of a New Project,Started working on the CipherGUI project. Feeling optimistic about the progress and challenges ahead.
-2,2024-05-05-0231,""""""""""""",,,,,,,HUH?",hello chicky
-4,2023-03-22,A Challenging Bug,Spent the entire day tracking down a memory leak. Finally found it in the rendering loop. It was a misplaced PopID call.
-5,2023-05-01,Holiday Trip,Took a short trip to the mountains. The fresh air was exactly what I needed to clear my head.
-6,2023-08-11,Presentation Day,Presented the project prototype today. The feedback was overwhelmingly positive! All the hard work is paying off.
-7,2023-10-26,Refactoring Old Code,"Decided to refactor the UI manager. It's a lot of work, but it will be worth it for maintainability."
-8,2024-05-06,hey there little bodie,"Hello, can I help you with somethinsg"
-9,2024-13-05,A massage in the future,MULTAO!
-10,2024-12-02,Hello,
-11,2025-02-02,Hellooo,""""""""":::;;;;;;helloo sadoaspdjaskdl"
+1,2023-01-15,First Day of a New Project,Started working on the CipherGUI project. Feeling optimistic about the progress and challenges ahead.
+2,2023-03-22,A Challenging Bug,Spent the entire day tracking down a memory leak. Finally found it in the rendering loop. It was a misplaced PopID call.
+3,2023-05-01,Holiday Trip,Took a short trip to the mountains. The fresh air was exactly what I needed to clear my head.
+4,2023-08-11,Presentation Day,Presented the project prototype today. The feedback was overwhelmingly positive! All the hard work is paying off.
+5,2023-10-26,Refactoring Old Code,"Decided to refactor the UI manager. It's a lot of work, but it will be worth it for maintainability."

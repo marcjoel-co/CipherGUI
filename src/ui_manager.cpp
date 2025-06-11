@@ -94,11 +94,11 @@ public:
     // This is the main entry point
     // Each `check...` function returns a reference to itself, allowing us to chain calls together.
     Validator& checkAll() {
-        checkDateFormat()
-        .checkDateLogic()
-        .checkFutureDate()
-        .checkTitle()
-        .checkUniqueness();
+        checkDateFormat()    //1 
+        .checkDateLogic()   //1
+        .checkFutureDate()   //1
+        .checkTitle()      ///  1 
+        .checkUniqueness(); // 1
         return *this;
     }
 
@@ -112,8 +112,7 @@ private:
     // all subsequent checks .
     Validator& checkDateFormat() {
         if (m_error) return *this; // Short-circuit if already failed.
-        if (m_error) return *this;
-
+    
                 // This regex pattern means:
                 // ^        - Start of the string
                 // \d{4}    - Exactly 4 digits
@@ -352,7 +351,7 @@ void drawNewEntryPopup(DiaryManager& diary) {
         // int btn_idx = 0; // Index for shenanigans
         ImGui::InputText("Date (YYYY-MM-DD)", s_ui_state.new_date, sizeof(s_ui_state.new_date));
         ImGui::InputText("Title", s_ui_state.new_title, sizeof(s_ui_state.new_title));
-        ImGui::InputTextMultiline("Chikonent", s_ui_state.new_content, sizeof(s_ui_state.new_content), ImVec2(500, 300));
+        ImGui::InputTextMultiline("CHat", s_ui_state.new_content, sizeof(s_ui_state.new_content), ImVec2(500, 300));
         
         if (UI_BUTTON_SIZED("Save", ImVec2(120, 0), btn_idx++)) {
             trimWhitespace(s_ui_state.new_title);
@@ -373,7 +372,7 @@ void drawNewEntryPopup(DiaryManager& diary) {
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), s_ui_state.validation_error);
         }
         
-        ImGui::SameLine();
+      
         if (UI_BUTTON_SIZED("Cancel", ImVec2(120, 0), btn_idx++)) {
             ImGui::CloseCurrentPopup();
         }
